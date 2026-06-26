@@ -47,9 +47,54 @@ http://localhost:3000
 
 ```txt
 Leo padathuku 2 ticket venum nalaiku morning
+Confirm booking
+Cancel booking
+Love movie suggest pannunga
+Movie details sollu
 Jailer showtimes sollu
 Refund TXN123456
+Yes cancel it
+No keep ticket
 Weather sollu
 ```
 
 Hari should only answer movie ticket, showtime, booking, and refund questions.
+
+## Booking Flow
+
+Hari does not book tickets immediately. The Booking Agent first creates a pending booking and asks for confirmation. Seats are reduced only after the user confirms.
+
+```txt
+User asks for tickets
+  -> prepare_booking
+  -> Hari asks confirmation
+
+User confirms
+  -> confirm_booking
+  -> ticket is booked
+  -> movie ticket UI is shown
+
+User cancels before confirmation
+  -> cancel_pending_booking
+  -> no seats are reduced
+```
+
+## Ticket Cancellation Flow
+
+Confirmed tickets are not cancelled immediately. Hari first asks the customer to think once more, then cancels only after a clear yes.
+
+```txt
+User asks to cancel TXN747627
+  -> prepare_cancellation
+  -> Hari asks confirmation with a movie suggestion
+
+User says yes
+  -> confirm_cancellation
+  -> ticket is cancelled
+  -> seats are returned
+
+User says no
+  -> decline_cancellation
+  -> ticket remains active
+  -> Hari sends an enjoy message
+```

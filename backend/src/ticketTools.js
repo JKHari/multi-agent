@@ -1,4 +1,9 @@
-import { moviesData, userBookingsCache } from './store.js'
+import {
+  moviesData,
+  pendingBookingsCache,
+  pendingCancellationsCache,
+  userBookingsCache
+} from './store.js'
 
 function normalize(value) {
   return String(value || '').trim().toLowerCase()
@@ -6,6 +11,14 @@ function normalize(value) {
 
 function createBookingId() {
   return `TXN${Math.floor(100000 + Math.random() * 900000)}`
+}
+
+function createPendingBookingId() {
+  return `PENDING${Math.floor(100000 + Math.random() * 900000)}`
+}
+
+function createPendingCancellationId() {
+  return `CANCEL${Math.floor(100000 + Math.random() * 900000)}`
 }
 
 function findMovie(movieName) {
@@ -30,7 +43,35 @@ export function getMoviesInfo() {
   }
 }
 
-export function bookTicket({ movieName, date, time, seatCount }) {
+export function getMovieSuggestions({ genreOrMood }) {
+  const preference = normalize(genreOrMood)
+  const matchedMovies = preference
+    ? moviesData.filter((movie) => {
+        const searchableText = [
+          movie.title,
+          movie.genre,
+          movie.reviewNote,
+          ...(movie.moodTags || [])
+        ]
+          .join(' ')
+          .toLowerCase()
+
+        return searchableText.includes(preference)
+      })
+    : []
+
+  return {
+    success: true,
+    preference: genreOrMood || null,
+    movies: matchedMovies.length > 0 ? matchedMovies : moviesData,
+    message:
+      matchedMovies.length > 0
+        ? `Found ${matchedMovies.length} movie suggestion(s).`
+        : 'No exact preference match found, returning all available movies.'
+  }
+}
+
+export function prepareBooking({ movieName, date, time, seatCount }) {
   const seats = Number(seatCount)
 
   if (!movieName || !date || !time || !Number.isInteger(seats) || seats <= 0) {
@@ -72,7 +113,80 @@ export function bookTicket({ movieName, date, time, seatCount }) {
     }
   }
 
-  showtime.availableSeats -= seats
+  const pendingBooking = {
+    pendingBookingId: createPendingBookingId(),
+    movieId: movie.movieId,
+    title: movie.title,
+    theater: movie.theater,
+    location: movie.location,
+    language: movie.language,
+    genre: movie.genre,
+    reviewNote: movie.reviewNote,
+    date,
+    time: showtime.time,
+    screen: showtime.screen,
+    seats,
+    status: 'pending'
+  }
+
+  pendingBookingsCache.push(pendingBooking)
+
+  return {
+    success: true,
+    action: 'ask_confirmation',
+    pendingBooking,
+    message:
+      'Seats are available. Ask the customer to confirm before booking. Do not show a ticket yet.'
+  }
+}
+
+export function confirmBooking({ pendingBookingId } = {}) {
+  const normalizedPendingId = normalize(pendingBookingId)
+  const pendingBooking = normalizedPendingId
+    ? pendingBookingsCache.find(
+        (item) =>
+          normalize(item.pendingBookingId) === normalizedPendingId &&
+          item.status === 'pending'
+      )
+    : [...pendingBookingsCache].reverse().find((item) => item.status === 'pending')
+
+  if (!pendingBooking) {
+    return {
+      success: false,
+      reason: 'pending_booking_not_found',
+      message:
+        'No pending booking was found. Ask the customer for movie, date, time, and seat count again.'
+    }
+  }
+
+  const movie = moviesData.find((item) => item.movieId === pendingBooking.movieId)
+  const showtime = movie
+    ? findShowtime(movie, pendingBooking.date, pendingBooking.time)
+    : null
+
+  if (!movie || !showtime) {
+    pendingBooking.status = 'expired'
+
+    return {
+      success: false,
+      reason: 'showtime_not_found',
+      message: 'This pending showtime is no longer available.'
+    }
+  }
+
+  if (showtime.availableSeats < pendingBooking.seats) {
+    pendingBooking.status = 'expired'
+
+    return {
+      success: false,
+      reason: 'not_enough_seats',
+      message: `Only ${showtime.availableSeats} seats are available now.`,
+      availableSeats: showtime.availableSeats
+    }
+  }
+
+  showtime.availableSeats -= pendingBooking.seats
+  pendingBooking.status = 'confirmed'
 
   const ticketData = {
     bookingId: createBookingId(),
@@ -81,9 +195,12 @@ export function bookTicket({ movieName, date, time, seatCount }) {
     theater: movie.theater,
     location: movie.location,
     language: movie.language,
-    date,
-    time: showtime.time,
-    seats,
+    genre: movie.genre,
+    reviewNote: movie.reviewNote,
+    date: pendingBooking.date,
+    time: pendingBooking.time,
+    screen: showtime.screen,
+    seats: pendingBooking.seats,
     status: 'confirmed'
   }
 
@@ -92,29 +209,133 @@ export function bookTicket({ movieName, date, time, seatCount }) {
   return {
     success: true,
     action: 'show_ticket',
-    ticketData
+    ticketData,
+    message:
+      'Booking confirmed. Include the movie review or mood note in the final reply.'
   }
 }
 
-export function processRefund({ bookingId }) {
+export function cancelPendingBooking({ pendingBookingId } = {}) {
+  const normalizedPendingId = normalize(pendingBookingId)
+  const pendingBooking = normalizedPendingId
+    ? pendingBookingsCache.find(
+        (item) =>
+          normalize(item.pendingBookingId) === normalizedPendingId &&
+          item.status === 'pending'
+      )
+    : [...pendingBookingsCache].reverse().find((item) => item.status === 'pending')
+
+  if (!pendingBooking) {
+    return {
+      success: false,
+      reason: 'pending_booking_not_found',
+      message: 'No pending booking was found to cancel.'
+    }
+  }
+
+  pendingBooking.status = 'cancelled'
+
+  return {
+    success: true,
+    action: 'none',
+    cancelledPendingBooking: pendingBooking,
+    message:
+      'Pending booking cancelled. Suggest thinking one more time because this is a good film, but respect the customer choice.'
+  }
+}
+
+function findConfirmedBooking(bookingId) {
   const normalizedBookingId = normalize(bookingId)
-  const booking = userBookingsCache.find(
-    (item) => normalize(item.bookingId) === normalizedBookingId
+
+  return userBookingsCache.find(
+    (item) =>
+      normalize(item.bookingId) === normalizedBookingId && item.status === 'confirmed'
   )
+}
+
+export function prepareCancellation({ bookingId }) {
+  const booking = findConfirmedBooking(bookingId)
 
   if (!booking) {
     return {
       success: false,
       reason: 'booking_not_found',
-      message: `Booking ${bookingId} was not found.`
+      message: `Booking ${bookingId} was not found or is not active.`
     }
   }
 
-  if (booking.status === 'cancelled') {
+  const existingPending = pendingCancellationsCache.find(
+    (item) => item.bookingId === booking.bookingId && item.status === 'pending'
+  )
+
+  if (existingPending) {
+    return {
+      success: true,
+      action: 'ask_cancellation_confirmation',
+      pendingCancellation: existingPending,
+      message:
+        'Cancellation is already pending. Ask the customer to confirm yes or no.'
+    }
+  }
+
+  const pendingCancellation = {
+    pendingCancellationId: createPendingCancellationId(),
+    bookingId: booking.bookingId,
+    movieId: booking.movieId,
+    title: booking.title,
+    theater: booking.theater,
+    location: booking.location,
+    language: booking.language,
+    genre: booking.genre,
+    reviewNote: booking.reviewNote,
+    date: booking.date,
+    time: booking.time,
+    screen: booking.screen,
+    seats: booking.seats,
+    status: 'pending'
+  }
+
+  pendingCancellationsCache.push(pendingCancellation)
+
+  return {
+    success: true,
+    action: 'ask_cancellation_confirmation',
+    pendingCancellation,
+    message:
+      'Do not cancel yet. Say the movie is good, ask the customer to think one more time, and ask for confirmation.'
+  }
+}
+
+export function confirmCancellation({ pendingCancellationId } = {}) {
+  const normalizedPendingId = normalize(pendingCancellationId)
+  const pendingCancellation = normalizedPendingId
+    ? pendingCancellationsCache.find(
+        (item) =>
+          normalize(item.pendingCancellationId) === normalizedPendingId &&
+          item.status === 'pending'
+      )
+    : [...pendingCancellationsCache]
+        .reverse()
+        .find((item) => item.status === 'pending')
+
+  if (!pendingCancellation) {
     return {
       success: false,
-      reason: 'already_cancelled',
-      message: `Booking ${booking.bookingId} is already cancelled.`
+      reason: 'pending_cancellation_not_found',
+      message:
+        'No pending cancellation was found. Ask the customer for the booking ID again.'
+    }
+  }
+
+  const booking = findConfirmedBooking(pendingCancellation.bookingId)
+
+  if (!booking) {
+    pendingCancellation.status = 'expired'
+
+    return {
+      success: false,
+      reason: 'booking_not_found',
+      message: `Booking ${pendingCancellation.bookingId} was not found or is already cancelled.`
     }
   }
 
@@ -126,6 +347,7 @@ export function processRefund({ bookingId }) {
   }
 
   booking.status = 'cancelled'
+  pendingCancellation.status = 'confirmed'
 
   return {
     success: true,
@@ -136,9 +358,49 @@ export function processRefund({ bookingId }) {
       theater: booking.theater,
       date: booking.date,
       time: booking.time,
+      screen: booking.screen,
       seats: booking.seats,
       status: booking.status
     }
+  }
+}
+
+export function declineCancellation({ pendingCancellationId } = {}) {
+  const normalizedPendingId = normalize(pendingCancellationId)
+  const pendingCancellation = normalizedPendingId
+    ? pendingCancellationsCache.find(
+        (item) =>
+          normalize(item.pendingCancellationId) === normalizedPendingId &&
+          item.status === 'pending'
+      )
+    : [...pendingCancellationsCache]
+        .reverse()
+        .find((item) => item.status === 'pending')
+
+  if (!pendingCancellation) {
+    return {
+      success: false,
+      reason: 'pending_cancellation_not_found',
+      message: 'No pending cancellation was found.'
+    }
+  }
+
+  pendingCancellation.status = 'declined'
+
+  return {
+    success: true,
+    action: 'none',
+    keptBooking: {
+      bookingId: pendingCancellation.bookingId,
+      title: pendingCancellation.title,
+      theater: pendingCancellation.theater,
+      date: pendingCancellation.date,
+      time: pendingCancellation.time,
+      seats: pendingCancellation.seats,
+      status: 'confirmed'
+    },
+    message:
+      'Cancellation declined. Tell the customer the ticket is still active and send a cheerful enjoy message.'
   }
 }
 
@@ -147,12 +409,32 @@ export function runTicketTool(name, args) {
     return getMoviesInfo()
   }
 
-  if (name === 'book_ticket') {
-    return bookTicket(args)
+  if (name === 'get_movie_suggestions') {
+    return getMovieSuggestions(args)
   }
 
-  if (name === 'process_refund') {
-    return processRefund(args)
+  if (name === 'prepare_booking') {
+    return prepareBooking(args)
+  }
+
+  if (name === 'confirm_booking') {
+    return confirmBooking(args)
+  }
+
+  if (name === 'cancel_pending_booking') {
+    return cancelPendingBooking(args)
+  }
+
+  if (name === 'prepare_cancellation') {
+    return prepareCancellation(args)
+  }
+
+  if (name === 'confirm_cancellation') {
+    return confirmCancellation(args)
+  }
+
+  if (name === 'decline_cancellation') {
+    return declineCancellation(args)
   }
 
   return {

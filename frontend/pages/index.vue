@@ -35,6 +35,7 @@
                   <div>
                     <h3 class="font-bold">{{ movie.title }}</h3>
                     <p class="mt-1 text-xs text-stone-400">{{ movie.theater }}</p>
+                    <p class="mt-1 text-xs font-semibold text-emerald-300">{{ movie.genre }}</p>
                   </div>
                   <span class="rounded-md bg-stone-800 px-2 py-1 text-xs text-emerald-300">
                     {{ movie.language }}
@@ -123,6 +124,7 @@ const movies = [
     title: 'Leo',
     theater: 'Vetri Cinemas',
     language: 'Tamil',
+    genre: 'Action Thriller',
     showtimes: [
       { time: '10:00 AM', availableSeats: 50 },
       { time: '06:00 PM', availableSeats: 5 }
@@ -132,6 +134,7 @@ const movies = [
     title: 'Jailer',
     theater: 'Inox',
     language: 'Tamil',
+    genre: 'Action Comedy',
     showtimes: [
       { time: '02:00 PM', availableSeats: 20 },
       { time: '09:30 PM', availableSeats: 12 }
@@ -141,17 +144,29 @@ const movies = [
     title: 'Vikram',
     theater: 'PVR Escape',
     language: 'Tamil',
+    genre: 'Action Thriller',
     showtimes: [
       { time: '11:30 AM', availableSeats: 34 },
       { time: '07:15 PM', availableSeats: 18 }
+    ]
+  },
+  {
+    title: '96',
+    theater: 'Sathyam Cinemas',
+    language: 'Tamil',
+    genre: 'Love Drama',
+    showtimes: [
+      { time: '01:00 PM', availableSeats: 28 },
+      { time: '08:00 PM', availableSeats: 16 }
     ]
   }
 ]
 
 const quickPrompts = [
   'Leo padathuku 2 ticket venum nalaiku morning',
-  'Jailer showtimes sollu',
-  'Refund TXN123456'
+  'Love movie suggest pannunga',
+  'Confirm booking',
+  'Cancel booking'
 ]
 
 let messageId = 1
